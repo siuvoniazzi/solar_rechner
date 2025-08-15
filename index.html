@@ -19,6 +19,17 @@
         input[type="file"]::file-selector-button {
             @apply bg-indigo-600 text-white font-semibold py-2 px-4 rounded-lg cursor-pointer transition-colors duration-300 hover:bg-indigo-700;
         }
+        /* Progress bar animation */
+        @keyframes fillProgress {
+            from { width: 0%; }
+        }
+        .progress-bar {
+            animation: fillProgress 1.5s ease-out forwards;
+        }
+        /* Number counter animation */
+        .counter {
+            display: inline-block;
+        }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
@@ -159,6 +170,31 @@
         function formatDate(date) { if (!date) return ''; const day = String(date.getDate()).padStart(2, '0'); const month = String(date.getMonth() + 1).padStart(2, '0'); const year = date.getFullYear(); return `${day}.${month}.${year}`; }
         function createBreakdownLabel(meterId, minDate, maxDate) { const start = formatDate(minDate); const end = formatDate(maxDate); if (start && end) { return start === end ? `Zähler ${meterId} (${start})` : `Zähler ${meterId} (${start} - ${end})`; } return `Zähler ${meterId}`; }
 
+        function animateCounter(element, targetValue, duration = 1500, suffix = '') {
+            const startTime = performance.now();
+            const startValue = 0;
+            
+            function updateCounter(currentTime) {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                // Easing function for smooth animation
+                const easedProgress = 1 - Math.pow(1 - progress, 3);
+                const currentValue = startValue + (targetValue - startValue) * easedProgress;
+                
+                if (typeof targetValue === 'number') {
+                    const decimals = suffix.includes('kWh') ? 3 : 2;
+                    element.textContent = currentValue.toFixed(decimals).replace('.', ',') + suffix;
+                }
+                
+                if (progress < 1) {
+                    requestAnimationFrame(updateCounter);
+                }
+            }
+            
+            requestAnimationFrame(updateCounter);
+        }
+
         function displayResults(summaryData, breakdownData, prices) {
             const formatKwh = (num) => num.toFixed(3).replace('.', ',');
             const formatChf = (num) => num.toFixed(2).replace('.', ',');
@@ -169,36 +205,94 @@
             const savingsSelfConsumption = summaryData.selfConsumption * prices.priceBuy;
             const netResult = (incomeFeedIn + savingsSelfConsumption) - costGridImport;
 
+            // Find max value for progress bar scaling
+            const maxValue = Math.max(summaryData.totalConsumption, summaryData.totalProduction);
+
             summaryContainer.innerHTML = `
                 <h2 class="text-2xl font-bold text-center mb-6">Gesamtabrechnung</h2>
                 <div class="space-y-4">
-                    ${createResultRow('Gesamtverbrauch (Bezug)', `${formatKwh(summaryData.totalConsumption)} kWh`)}
-                    ${createResultRow('Gesamtproduktion (Lieferung)', `${formatKwh(summaryData.totalProduction)} kWh`)}
+                    ${createResultRowWithBar('Gesamtverbrauch (Bezug)', summaryData.totalConsumption, maxValue, 'kWh', 'bg-red-500')}
+                    ${createResultRowWithBar('Gesamtproduktion (Lieferung)', summaryData.totalProduction, maxValue, 'kWh', 'bg-green-500')}
                     <hr class="border-gray-600 my-3">
-                    ${createResultRow('Verrechenbarer Eigenverbrauch', `${formatKwh(summaryData.selfConsumption)} kWh`, `Wert: ${formatChf(savingsSelfConsumption)} CHF`)}
-                    ${createResultRow('Überschüssige Einspeisung', `${formatKwh(summaryData.surplusFeedIn)} kWh`, `Ertrag: ${formatChf(incomeFeedIn)} CHF`)}
-                    ${createResultRow('Reststrombezug vom Netz', `${formatKwh(summaryData.gridImport)} kWh`, `Kosten: ${formatChf(costGridImport)} CHF`)}
+                    ${createResultRowWithBar('Verrechenbarer Eigenverbrauch', summaryData.selfConsumption, maxValue, 'kWh', 'bg-blue-500', `Wert: ${formatChf(savingsSelfConsumption)} CHF`)}
+                    ${createResultRowWithBar('Überschüssige Einspeisung', summaryData.surplusFeedIn, maxValue, 'kWh', 'bg-yellow-500', `Ertrag: ${formatChf(incomeFeedIn)} CHF`)}
+                    ${createResultRowWithBar('Reststrombezug vom Netz', summaryData.gridImport, maxValue, 'kWh', 'bg-orange-500', `Kosten: ${formatChf(costGridImport)} CHF`)}
                     <hr class="border-gray-600 my-3">
                     <div class="flex justify-between items-center py-2 text-lg">
                         <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">Nettoergebnis</span>
-                        <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">${formatChf(netResult)} CHF</span>
+                        <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'} counter" data-value="${netResult}" data-suffix=" CHF">${formatChf(0)} CHF</span>
                     </div>
                 </div>
             `;
 
+            // Animate all counters
+            document.querySelectorAll('.counter').forEach(counter => {
+                const value = parseFloat(counter.dataset.value);
+                const suffix = counter.dataset.suffix || '';
+                animateCounter(counter, value, 1500, suffix);
+            });
+
             if (breakdownData.length > 1) {
-                 breakdownContainer.innerHTML = breakdownData.map(file => `
-                    <div class="bg-white rounded-lg p-4 border border-gray-200">
-                        <h3 class="font-bold text-gray-800 mb-3">${file.label}</h3>
-                        <div class="text-sm space-y-2">
-                            <div class="flex justify-between text-gray-600"><span>Produktion:</span><span class="font-medium text-green-600">${formatKwh(file.production)} kWh</span></div>
-                            <div class="flex justify-between text-gray-600"><span>Verbrauch:</span><span class="font-medium text-red-600">${formatKwh(file.consumption)} kWh</span></div>
+                let breakdownHtml = '';
+                breakdownData.forEach((file, index) => {
+                    const fileId = `file-${index}`;
+                    breakdownHtml += `
+                        <div class="bg-white rounded-lg p-4 border border-gray-200">
+                            <h3 class="font-bold text-gray-800 mb-3">${file.label}</h3>
+                            <div class="text-sm space-y-3">
+                                <div>
+                                    <div class="flex justify-between text-gray-600 mb-1">
+                                        <span>Produktion:</span>
+                                        <span class="font-medium text-green-600 counter" data-value="${file.production}" data-suffix=" kWh">${formatKwh(0)} kWh</span>
+                                    </div>
+                                    <div class="w-full bg-gray-200 rounded-full h-2">
+                                        <div class="bg-green-500 h-2 rounded-full progress-bar" style="width: ${(file.production / Math.max(file.production, file.consumption)) * 100}%"></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="flex justify-between text-gray-600 mb-1">
+                                        <span>Verbrauch:</span>
+                                        <span class="font-medium text-red-600 counter" data-value="${file.consumption}" data-suffix=" kWh">${formatKwh(0)} kWh</span>
+                                    </div>
+                                    <div class="w-full bg-gray-200 rounded-full h-2">
+                                        <div class="bg-red-500 h-2 rounded-full progress-bar" style="width: ${(file.consumption / Math.max(file.production, file.consumption)) * 100}%"></div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                `).join('');
+                    `;
+                });
+                breakdownContainer.innerHTML = breakdownHtml;
+                
+                // Animate breakdown counters
+                breakdownContainer.querySelectorAll('.counter').forEach(counter => {
+                    const value = parseFloat(counter.dataset.value);
+                    const suffix = counter.dataset.suffix || '';
+                    animateCounter(counter, value, 1500, suffix);
+                });
             } else {
                 breakdownContainer.innerHTML = '';
             }
+        }
+
+        function createResultRowWithBar(label, value, maxValue, unit = 'kWh', barColor = 'bg-blue-500', monetaryValue = '') {
+            const percentage = (value / maxValue) * 100;
+            const formattedValue = unit === 'kWh' ? '0,000' : '0,00';
+            
+            return `
+                <div class="py-3 border-b border-gray-700">
+                    <div class="flex justify-between items-center mb-2">
+                        <div>
+                            <span class="text-gray-300">${label}</span>
+                            ${monetaryValue ? `<br><span class="text-sm text-indigo-300">${monetaryValue}</span>` : ''}
+                        </div>
+                        <span class="font-semibold text-lg text-white text-right counter" data-value="${value}" data-suffix=" ${unit}">${formattedValue} ${unit}</span>
+                    </div>
+                    <div class="w-full bg-gray-600 rounded-full h-3">
+                        <div class="${barColor} h-3 rounded-full progress-bar" style="width: ${percentage}%"></div>
+                    </div>
+                </div>
+            `;
         }
 
         function createResultRow(label, value, monetaryValue = '') {
