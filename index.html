@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Energieabrechnungsrechner</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter font for a modern look -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Custom styles to apply the Inter font */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Style for the file input button */
+        input[type="file"]::file-selector-button {
+            @apply bg-indigo-600 text-white font-semibold py-2 px-4 rounded-lg cursor-pointer transition-colors duration-300 hover:bg-indigo-700;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+
+    <div class="w-full max-w-2xl mx-auto bg-white rounded-2xl shadow-lg p-6 md:p-8">
+        
+        <!-- Header Section -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">Energiedaten-Prozessor</h1>
+            <p class="text-gray-500 mt-2">Laden Sie Ihre CSV-Dateien hoch, um Ihre Energieabrechnung zu berechnen.</p>
+        </div>
+
+        <!-- Price Inputs Section -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 bg-gray-50 p-4 rounded-lg border">
+            <div>
+                <label for="price-buy" class="block text-sm font-medium text-gray-700">Preis für Netzbezug (CHF/kWh)</label>
+                <input type="number" id="price-buy" value="0.25" step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+            </div>
+            <div>
+                <label for="price-sell" class="block text-sm font-medium text-gray-700">Preis für Einspeisung (CHF/kWh)</label>
+                <input type="number" id="price-sell" value="0.10" step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+            </div>
+        </div>
+
+        <!-- File Upload Section -->
+        <div class="mb-6">
+            <label for="file-upload" class="block text-sm font-medium text-gray-700 mb-2">CSV-Dateien auswählen:</label>
+            <input id="file-upload" type="file" multiple accept=".csv" class="block w-full text-sm text-gray-500 file:mr-4 file:border-0 file:rounded-lg">
+        </div>
+
+        <!-- Action Button -->
+        <div class="text-center mb-8">
+            <button id="process-btn" class="w-full md:w-auto bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-transform transform hover:scale-105 duration-300">
+                Dateien verarbeiten
+            </button>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results-container" class="space-y-6 hidden">
+            <!-- Overall summary will be inserted here -->
+            <div id="summary-container" class="bg-gray-800 text-white rounded-xl p-6 shadow-inner"></div>
+            <!-- Per-file breakdown will be inserted here -->
+            <div id="breakdown-container" class="space-y-4"></div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- DOM Element References ---
+        const fileUpload = document.getElementById('file-upload');
+        const processBtn = document.getElementById('process-btn');
+        const priceBuyInput = document.getElementById('price-buy');
+        const priceSellInput = document.getElementById('price-sell');
+        const resultsContainer = document.getElementById('results-container');
+        const summaryContainer = document.getElementById('summary-container');
+        const breakdownContainer = document.getElementById('breakdown-container');
+
+        // --- Constants for Data Processing ---
+        const CONSUMPTION_CODE = '1-1:1.29.0*255';
+        const PRODUCTION_CODE = '1-1:2.29.0*255';
+
+        /**
+         * Main function to handle the file processing logic.
+         */
+        processBtn.addEventListener('click', async () => {
+            const files = fileUpload.files;
+            if (files.length === 0) {
+                displayMessage('Bitte wählen Sie mindestens eine CSV-Datei aus.');
+                return;
+            }
+
+            const priceBuy = parseFloat(priceBuyInput.value) || 0;
+            const priceSell = parseFloat(priceSellInput.value) || 0;
+
+            resultsContainer.classList.remove('hidden');
+            summaryContainer.innerHTML = '<p class="text-center text-gray-400">Dateien werden verarbeitet...</p>';
+            breakdownContainer.innerHTML = '';
+            
+            try {
+                const fileContents = await Promise.all(Array.from(files).map(readFileAsText));
+                
+                let grandTotalProduction = 0;
+                let grandTotalConsumption = 0;
+                const fileBreakdown = [];
+
+                fileContents.forEach(content => {
+                    let fileProduction = 0, fileConsumption = 0;
+                    let meterId = 'Unbekannter Zähler', minDate = null, maxDate = null;
+                    const lines = content.split('\n').filter(line => line.trim() !== '');
+                    if (lines.length === 0) return;
+
+                    lines.forEach(line => {
+                        const delimiter = line.includes(';') ? ';' : ',';
+                        const columns = line.split(delimiter);
+                        if (columns.length < 5) return;
+
+                        if (meterId === 'Unbekannter Zähler') meterId = columns[0];
+                        const currentDate = parseDate(columns[3]);
+                        if (currentDate) {
+                            if (!minDate || currentDate < minDate) minDate = currentDate;
+                            if (!maxDate || currentDate > maxDate) maxDate = currentDate;
+                        }
+
+                        const typeCode = columns[1];
+                        const values = columns.slice(4).map(v => parseFloat(v) || 0);
+                        const sum = values.reduce((acc, val) => acc + val, 0);
+
+                        if (typeCode === PRODUCTION_CODE) fileProduction += sum;
+                        else if (typeCode === CONSUMPTION_CODE) fileConsumption += sum;
+                    });
+
+                    grandTotalProduction += fileProduction;
+                    grandTotalConsumption += fileConsumption;
+                    const label = createBreakdownLabel(meterId, minDate, maxDate);
+                    fileBreakdown.push({ label, production: fileProduction, consumption: fileConsumption });
+                });
+
+                const surplusFeedIn = Math.max(0, grandTotalProduction - grandTotalConsumption);
+                const gridImport = Math.max(0, grandTotalConsumption - grandTotalProduction);
+                const selfConsumption = grandTotalProduction - surplusFeedIn;
+
+                displayResults({
+                    totalConsumption: grandTotalConsumption,
+                    totalProduction: grandTotalProduction,
+                    selfConsumption,
+                    surplusFeedIn,
+                    gridImport
+                }, fileBreakdown, { priceBuy, priceSell });
+
+            } catch (error) {
+                console.error('Error processing files:', error);
+                displayMessage('Ein Fehler ist aufgetreten. Bitte überprüfen Sie die Konsole für Details.');
+            }
+        });
+
+        function readFileAsText(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error); reader.readAsText(file); }); }
+        function parseDate(dateString) { const parts = dateString.trim().split('.'); if (parts.length === 3) { const [day, month, year] = parts.map(p => parseInt(p, 10)); return new Date(year, month - 1, day); } return null; }
+        function formatDate(date) { if (!date) return ''; const day = String(date.getDate()).padStart(2, '0'); const month = String(date.getMonth() + 1).padStart(2, '0'); const year = date.getFullYear(); return `${day}.${month}.${year}`; }
+        function createBreakdownLabel(meterId, minDate, maxDate) { const start = formatDate(minDate); const end = formatDate(maxDate); if (start && end) { return start === end ? `Zähler ${meterId} (${start})` : `Zähler ${meterId} (${start} - ${end})`; } return `Zähler ${meterId}`; }
+
+        function displayResults(summaryData, breakdownData, prices) {
+            const formatKwh = (num) => num.toFixed(3).replace('.', ',');
+            const formatChf = (num) => num.toFixed(2).replace('.', ',');
+
+            // Monetary calculations
+            const costGridImport = summaryData.gridImport * prices.priceBuy;
+            const incomeFeedIn = summaryData.surplusFeedIn * prices.priceSell;
+            const savingsSelfConsumption = summaryData.selfConsumption * prices.priceBuy;
+            const netResult = (incomeFeedIn + savingsSelfConsumption) - costGridImport;
+
+            summaryContainer.innerHTML = `
+                <h2 class="text-2xl font-bold text-center mb-6">Gesamtabrechnung</h2>
+                <div class="space-y-4">
+                    ${createResultRow('Gesamtverbrauch (Bezug)', `${formatKwh(summaryData.totalConsumption)} kWh`)}
+                    ${createResultRow('Gesamtproduktion (Lieferung)', `${formatKwh(summaryData.totalProduction)} kWh`)}
+                    <hr class="border-gray-600 my-3">
+                    ${createResultRow('Verrechenbarer Eigenverbrauch', `${formatKwh(summaryData.selfConsumption)} kWh`, `Wert: ${formatChf(savingsSelfConsumption)} CHF`)}
+                    ${createResultRow('Überschüssige Einspeisung', `${formatKwh(summaryData.surplusFeedIn)} kWh`, `Ertrag: ${formatChf(incomeFeedIn)} CHF`)}
+                    ${createResultRow('Reststrombezug vom Netz', `${formatKwh(summaryData.gridImport)} kWh`, `Kosten: ${formatChf(costGridImport)} CHF`)}
+                    <hr class="border-gray-600 my-3">
+                    <div class="flex justify-between items-center py-2 text-lg">
+                        <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">Nettoergebnis</span>
+                        <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">${formatChf(netResult)} CHF</span>
+                    </div>
+                </div>
+            `;
+
+            if (breakdownData.length > 1) {
+                 breakdownContainer.innerHTML = breakdownData.map(file => `
+                    <div class="bg-white rounded-lg p-4 border border-gray-200">
+                        <h3 class="font-bold text-gray-800 mb-3">${file.label}</h3>
+                        <div class="text-sm space-y-2">
+                            <div class="flex justify-between text-gray-600"><span>Produktion:</span><span class="font-medium text-green-600">${formatKwh(file.production)} kWh</span></div>
+                            <div class="flex justify-between text-gray-600"><span>Verbrauch:</span><span class="font-medium text-red-600">${formatKwh(file.consumption)} kWh</span></div>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                breakdownContainer.innerHTML = '';
+            }
+        }
+
+        function createResultRow(label, value, monetaryValue = '') {
+            return `
+                <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                    <div>
+                        <span class="text-gray-300">${label}</span>
+                        ${monetaryValue ? `<br><span class="text-sm text-indigo-300">${monetaryValue}</span>` : ''}
+                    </div>
+                    <span class="font-semibold text-lg text-white text-right">${value}</span>
+                </div>
+            `;
+        }
+
+        function displayMessage(message) {
+            resultsContainer.classList.remove('hidden');
+            summaryContainer.innerHTML = `<p class="text-center text-red-400">${message}</p>`;
+            breakdownContainer.innerHTML = '';
+        }
+    </script>
+</body>
+</html>
