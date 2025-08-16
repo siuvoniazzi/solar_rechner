@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Energieabrechnungsrechner (vZEV)</title>
+    <title>vZEV Abrechnung für Nachbarn</title>
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Inter font for a modern look -->
@@ -22,8 +22,8 @@
     <div class="w-full max-w-2xl mx-auto bg-white rounded-2xl shadow-lg p-6 md:p-8">
         
         <div class="text-center mb-8">
-            <h1 class="text-3xl font-bold text-gray-800">vZEV Energie-Prozessor</h1>
-            <p class="text-gray-500 mt-2">Laden Sie die CSV-Dateien der vZEV-Teilnehmer hoch.</p>
+            <h1 class="text-3xl font-bold text-gray-800">vZEV Abrechnung für Nachbarn</h1>
+            <p class="text-gray-500 mt-2">Laden Sie die Lastgangdaten von Ihnen und Ihrem Nachbarn hoch.</p>
         </div>
 
         <!-- Price Inputs Section -->
@@ -54,8 +54,8 @@
         </div>
 
         <div id="results-container" class="space-y-6 hidden">
+            <div id="neighbor-summary-container" class="bg-blue-900 bg-opacity-90 text-white rounded-xl p-6 shadow-inner"></div>
             <div id="summary-container" class="bg-gray-800 text-white rounded-xl p-6 shadow-inner"></div>
-            <div id="neighbor-summary-container" class="bg-blue-900 bg-opacity-80 text-white rounded-xl p-6 shadow-inner"></div>
         </div>
 
     </div>
@@ -72,14 +72,14 @@
         const neighborSummaryContainer = document.getElementById('neighbor-summary-container');
 
         // --- Constants for Data Processing ---
-        const CONSUMPTION_CODE = '1-1:1.29.0*255';
-        const PRODUCTION_CODE = '1-1:2.29.0*255';
+        const CONSUMPTION_CODE = '1-1:1.29.0*255'; // Netzbezug
+        const PRODUCTION_CODE = '1-1:2.29.0*255'; // Netzeinspeisung (Überschuss)
         const USER_METER_ID = 'CH1035501234500000000000000000859';
         const NEIGHBOR_METER_ID = 'CH1035501234500000000000000005020';
 
         processBtn.addEventListener('click', async () => {
             if (fileUpload.files.length === 0) {
-                displayMessage('Bitte wählen Sie mindestens eine CSV-Datei aus.');
+                displayMessage('Bitte wählen Sie die CSV-Dateien aus.');
                 return;
             }
 
@@ -120,16 +120,16 @@
 
                     if (!dataMap.has(date)) {
                         dataMap.set(date, {
-                            userProduction: Array(96).fill(0),
-                            userConsumption: Array(96).fill(0),
-                            neighborConsumption: Array(96).fill(0),
+                            userGridFeedIn: Array(96).fill(0), // Überschusseinspeisung
+                            userGridImport: Array(96).fill(0), // Ihr Netzbezug
+                            neighborGridImport: Array(96).fill(0), // Netzbezug des Nachbarn
                         });
                     }
                     const dayData = dataMap.get(date);
 
-                    if (meterId === USER_METER_ID && typeCode === PRODUCTION_CODE) dayData.userProduction = values;
-                    else if (meterId === USER_METER_ID && typeCode === CONSUMPTION_CODE) dayData.userConsumption = values;
-                    else if (meterId === NEIGHBOR_METER_ID && typeCode === CONSUMPTION_CODE) dayData.neighborConsumption = values;
+                    if (meterId === USER_METER_ID && typeCode === PRODUCTION_CODE) dayData.userGridFeedIn = values;
+                    else if (meterId === USER_METER_ID && typeCode === CONSUMPTION_CODE) dayData.userGridImport = values;
+                    else if (meterId === NEIGHBOR_METER_ID && typeCode === CONSUMPTION_CODE) dayData.neighborGridImport = values;
                 });
             });
             return dataMap;
@@ -137,31 +137,28 @@
 
         function calculateVZEV(timeSeriesData) {
             const totals = {
-                totalProduction: 0, userSelfConsumption: 0, soldToNeighbor: 0,
-                userGridImport: 0, neighborGridImport: 0, surplusFeedIn: 0,
-                totalUserConsumption: 0, totalNeighborConsumption: 0,
+                totalUserGridFeedIn: 0, // Totaler Überschuss
+                soldToNeighbor: 0,
+                finalGridFeedIn: 0, // Was nach Verkauf an Nachbar übrig bleibt
+                totalUserGridImport: 0,
+                totalNeighborGridImport: 0,
             };
 
             for (const data of timeSeriesData.values()) {
                 for (let i = 0; i < 96; i++) {
-                    const pTotal = data.userProduction[i] || 0;
-                    const cUser = data.userConsumption[i] || 0;
-                    const cNeighbor = data.neighborConsumption[i] || 0;
-
-                    totals.totalProduction += pTotal;
-                    totals.totalUserConsumption += cUser;
-                    totals.totalNeighborConsumption += cNeighbor;
-
-                    const userConsumedFromSolar = Math.min(pTotal, cUser);
-                    totals.userSelfConsumption += userConsumedFromSolar;
-                    totals.userGridImport += Math.max(0, cUser - pTotal);
+                    const userSurplus = data.userGridFeedIn[i] || 0;
+                    const neighborDemand = data.neighborGridImport[i] || 0;
                     
-                    const surplusAfterUser = pTotal - userConsumedFromSolar;
-                    const neighborConsumedFromSolar = Math.min(surplusAfterUser, cNeighbor);
-                    totals.soldToNeighbor += neighborConsumedFromSolar;
+                    totals.totalUserGridFeedIn += userSurplus;
+                    totals.totalUserGridImport += data.userGridImport[i] || 0;
+                    totals.totalNeighborGridImport += neighborDemand;
+
+                    // Kernlogik: Der verkaufte Strom ist der kleinere Wert von Angebot (Ihr Überschuss) und Nachfrage (Bedarf des Nachbarn)
+                    const consumedByNeighbor = Math.min(userSurplus, neighborDemand);
+                    totals.soldToNeighbor += consumedByNeighbor;
                     
-                    totals.neighborGridImport += Math.max(0, cNeighbor - surplusAfterUser);
-                    totals.surplusFeedIn += surplusAfterUser - neighborConsumedFromSolar;
+                    // Was nach dem Verkauf an den Nachbarn noch übrig ist, geht ins Netz
+                    totals.finalGridFeedIn += userSurplus - consumedByNeighbor;
                 }
             }
             return totals;
@@ -171,49 +168,46 @@
             const formatKwh = (num) => num.toFixed(3).replace('.', ',');
             const formatChf = (num) => num.toFixed(2).replace('.', ',');
 
-            // --- Your Summary ---
-            const savingsUserSelfConsumption = results.userSelfConsumption * prices.buy;
-            const incomeSoldToNeighbor = results.soldToNeighbor * prices.neighbor;
-            const incomeFeedIn = results.surplusFeedIn * prices.sell;
-            const costUserGridImport = results.userGridImport * prices.buy;
-            const totalZEVConsumption = results.userSelfConsumption + results.soldToNeighbor;
-            const netResult = (savingsUserSelfConsumption + incomeSoldToNeighbor + incomeFeedIn) - costUserGridImport;
-
-            summaryContainer.innerHTML = `
-                <h2 class="text-2xl font-bold text-center mb-6">Ihre Abrechnung (Zähler ...${USER_METER_ID.slice(-4)})</h2>
-                <div class="space-y-4">
-                    ${createResultRow('Gesamtproduktion Solar', `${formatKwh(results.totalProduction)} kWh`)}
-                    <hr class="border-gray-600 my-3">
-                    ${createResultRow('Eigener Solarstromverbrauch', `${formatKwh(results.userSelfConsumption)} kWh`, `Gesparter Betrag: ${formatChf(savingsUserSelfConsumption)} CHF`)}
-                    ${createResultRow('An Nachbarn verkaufter Solarstrom', `${formatKwh(results.soldToNeighbor)} kWh`, `Ertrag: ${formatChf(incomeSoldToNeighbor)} CHF`)}
-                    <div class="pl-4 border-l-2 border-indigo-400">${createResultRow('Totaler Eigenverbrauch (vZEV)', `${formatKwh(totalZEVConsumption)} kWh`)}</div>
-                    <hr class="border-gray-600 my-3">
-                    ${createResultRow('Überschüssige Einspeisung ins Netz', `${formatKwh(results.surplusFeedIn)} kWh`, `Ertrag: ${formatChf(incomeFeedIn)} CHF`)}
-                    ${createResultRow('Ihr Netzbezug', `${formatKwh(results.userGridImport)} kWh`, `Kosten: ${formatChf(costUserGridImport)} CHF`)}
-                    <hr class="border-gray-600 my-3">
-                    <div class="flex justify-between items-center py-2 text-lg">
-                        <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">Nettoergebnis</span>
-                        <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">${formatChf(netResult)} CHF</span>
-                    </div>
-                </div>
-            `;
-            
-            // --- Neighbor's Summary ---
+            // --- Neighbor's Bill ---
             const costNeighborFromSolar = results.soldToNeighbor * prices.neighbor;
-            const costNeighborFromGrid = results.neighborGridImport * prices.buy;
+            const neighborActualGridImport = results.totalNeighborGridImport - results.soldToNeighbor;
+            const costNeighborFromGrid = neighborActualGridImport * prices.buy;
             const totalCostNeighbor = costNeighborFromSolar + costNeighborFromGrid;
 
             neighborSummaryContainer.innerHTML = `
                 <h2 class="text-2xl font-bold text-center mb-6">Abrechnung für Nachbarn (Zähler ...${NEIGHBOR_METER_ID.slice(-4)})</h2>
                 <div class="space-y-4">
-                    ${createResultRow('Gesamtverbrauch Nachbar', `${formatKwh(results.totalNeighborConsumption)} kWh`)}
+                    ${createResultRow('Gesamtverbrauch Nachbar', `${formatKwh(results.totalNeighborGridImport)} kWh`)}
                     <hr class="border-gray-700 my-3">
-                    ${createResultRow('davon aus Solarstrom (vZEV)', `${formatKwh(results.soldToNeighbor)} kWh`, `Kosten: ${formatChf(costNeighborFromSolar)} CHF`)}
-                    ${createResultRow('davon aus Netzbezug', `${formatKwh(results.neighborGridImport)} kWh`, `Kosten: ${formatChf(costNeighborFromGrid)} CHF`)}
+                    ${createResultRow('davon von Ihnen (Solarstrom)', `${formatKwh(results.soldToNeighbor)} kWh`, `Kosten: ${formatChf(costNeighborFromSolar)} CHF`)}
+                    ${createResultRow('davon aus dem Netz', `${formatKwh(neighborActualGridImport)} kWh`, `Kosten: ${formatChf(costNeighborFromGrid)} CHF`)}
                     <hr class="border-gray-700 my-3">
                      <div class="flex justify-between items-center py-2 text-lg">
                         <span class="font-bold text-white">Gesamtkosten Nachbar</span>
                         <span class="font-bold text-white">${formatChf(totalCostNeighbor)} CHF</span>
+                    </div>
+                </div>
+            `;
+
+            // --- Your Summary ---
+            const incomeSoldToNeighbor = results.soldToNeighbor * prices.neighbor;
+            const incomeFinalGridFeedIn = results.finalGridFeedIn * prices.sell;
+            const costUserGridImport = results.totalUserGridImport * prices.buy;
+            const netResult = (incomeSoldToNeighbor + incomeFinalGridFeedIn) - costUserGridImport;
+
+            summaryContainer.innerHTML = `
+                <h2 class="text-2xl font-bold text-center mb-6">Ihre Abrechnung (Zähler ...${USER_METER_ID.slice(-4)})</h2>
+                <div class="space-y-4">
+                    ${createResultRow('Ihr gesamter Solar-Überschuss', `${formatKwh(results.totalUserGridFeedIn)} kWh`)}
+                    <hr class="border-gray-600 my-3">
+                    ${createResultRow('davon an Nachbarn verkauft', `${formatKwh(results.soldToNeighbor)} kWh`, `Ertrag: ${formatChf(incomeSoldToNeighbor)} CHF`)}
+                    ${createResultRow('davon ins Netz eingespeist', `${formatKwh(results.finalGridFeedIn)} kWh`, `Ertrag: ${formatChf(incomeFinalGridFeedIn)} CHF`)}
+                    <hr class="border-gray-600 my-3">
+                    ${createResultRow('Ihr Netzbezug', `${formatKwh(results.totalUserGridImport)} kWh`, `Kosten: ${formatChf(costUserGridImport)} CHF`)}
+                    <hr class="border-gray-600 my-3">
+                    <div class="flex justify-between items-center py-2 text-lg">
+                        <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">Nettoergebnis</span>
+                        <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">${formatChf(netResult)} CHF</span>
                     </div>
                 </div>
             `;
