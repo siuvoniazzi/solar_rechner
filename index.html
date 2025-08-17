@@ -198,6 +198,33 @@
 
         function structureDataByTime(fileContents) {
             const dataMap = new Map();
+            
+            // First, extract all meter IDs from the CSV data
+            const availableMeterIds = new Set();
+            fileContents.forEach(content => {
+                const lines = content.split('\n').filter(line => line.trim());
+                lines.forEach(line => {
+                    const delimiter = line.includes(';') ? ';' : ',';
+                    const cols = line.split(delimiter);
+                    if (cols.length >= 5) {
+                        availableMeterIds.add(cols[0]);
+                    }
+                });
+            });
+            
+            // Map participants without meter IDs to available meter IDs not already assigned
+            const unmappedParticipants = participants.filter(p => !p.meterId || p.meterId === '');
+            const usedMeterIds = new Set(participants.filter(p => p.meterId).map(p => p.meterId));
+            const unusedMeterIds = Array.from(availableMeterIds).filter(id => !usedMeterIds.has(id));
+            
+            // Create a temporary mapping for participants without meter IDs
+            const tempMeterMapping = {};
+            unmappedParticipants.forEach((participant, index) => {
+                if (index < unusedMeterIds.length) {
+                    tempMeterMapping[unusedMeterIds[index]] = participant.id;
+                }
+            });
+            
             fileContents.forEach(content => {
                 const lines = content.split('\n').filter(line => line.trim());
                 lines.forEach(line => {
@@ -218,15 +245,16 @@
                         
                         // Initialize data structure for each participant
                         participants.forEach(p => {
+                            const effectiveMeterId = p.meterId || Object.keys(tempMeterMapping).find(key => tempMeterMapping[key] === p.id) || p.id.toString();
                             if (p.isProducer) {
-                                dayData.producers[p.meterId] = {
+                                dayData.producers[effectiveMeterId] = {
                                     feedIn: Array(96).fill(0),
                                     import: Array(96).fill(0)
                                 };
                             }
                             if (p.isConsumer) {
-                                if (!dayData.consumers[p.meterId]) {
-                                    dayData.consumers[p.meterId] = {
+                                if (!dayData.consumers[effectiveMeterId]) {
+                                    dayData.consumers[effectiveMeterId] = {
                                         import: Array(96).fill(0)
                                     };
                                 }
@@ -237,18 +265,29 @@
                     }
                     
                     const dayData = dataMap.get(date);
-                    const participant = participants.find(p => p.meterId === meterId);
+                    
+                    // Find participant by meter ID or temporary mapping
+                    let participant = participants.find(p => p.meterId === meterId);
+                    if (!participant && tempMeterMapping[meterId] !== undefined) {
+                        participant = participants.find(p => p.id === tempMeterMapping[meterId]);
+                    }
                     
                     if (participant) {
+                        const effectiveMeterId = participant.meterId || meterId;
                         if (participant.isProducer && typeCode === PRODUCTION_CODE) {
-                            if (dayData.producers[meterId]) {
-                                dayData.producers[meterId].feedIn = values;
+                            if (dayData.producers[effectiveMeterId]) {
+                                dayData.producers[effectiveMeterId].feedIn = values;
                             }
                         } else if (typeCode === CONSUMPTION_CODE) {
-                            if (participant.isProducer && dayData.producers[meterId]) {
-                                dayData.producers[meterId].import = values;
-                            } else if (participant.isConsumer && dayData.consumers[meterId]) {
-                                dayData.consumers[meterId].import = values;
+                            if (participant.isProducer && dayData.producers[effectiveMeterId]) {
+                                dayData.producers[effectiveMeterId].import = values;
+                            } else if (participant.isConsumer) {
+                                if (!dayData.consumers[effectiveMeterId]) {
+                                    dayData.consumers[effectiveMeterId] = {
+                                        import: Array(96).fill(0)
+                                    };
+                                }
+                                dayData.consumers[effectiveMeterId].import = values;
                             }
                         }
                     }
@@ -284,9 +323,23 @@
                     
                     // Calculate surplus for each producer
                     participants.filter(p => p.isProducer).forEach(producer => {
-                        if (dayData.producers[producer.meterId]) {
-                            const production = dayData.producers[producer.meterId].feedIn[i] || 0;
-                            const ownConsumption = dayData.producers[producer.meterId].import[i] || 0;
+                        // Find data using any matching key (meterId or participant id)
+                        let producerData = null;
+                        if (producer.meterId && dayData.producers[producer.meterId]) {
+                            producerData = dayData.producers[producer.meterId];
+                        } else {
+                            // Try to find by other keys
+                            for (const [key, data] of Object.entries(dayData.producers)) {
+                                if (key === producer.id.toString()) {
+                                    producerData = data;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (producerData) {
+                            const production = producerData.feedIn[i] || 0;
+                            const ownConsumption = producerData.import[i] || 0;
                             
                             participantResults[producer.id].totalProduction += production;
                             participantResults[producer.id].totalConsumption += ownConsumption;
@@ -303,10 +356,40 @@
                     consumers.forEach(consumer => {
                         let demand = 0;
                         
-                        if (consumer.isProducer && dayData.producers[consumer.meterId]) {
-                            demand = dayData.producers[consumer.meterId].import[i] || 0;
-                        } else if (dayData.consumers[consumer.meterId]) {
-                            demand = dayData.consumers[consumer.meterId].import[i] || 0;
+                        if (consumer.isProducer) {
+                            // Producer-consumer: check producers data
+                            let producerData = null;
+                            if (consumer.meterId && dayData.producers[consumer.meterId]) {
+                                producerData = dayData.producers[consumer.meterId];
+                            } else {
+                                for (const [key, data] of Object.entries(dayData.producers)) {
+                                    if (key === consumer.id.toString()) {
+                                        producerData = data;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (producerData) {
+                                demand = producerData.import[i] || 0;
+                            }
+                        } else {
+                            // Pure consumer: check consumers data
+                            let consumerData = null;
+                            if (consumer.meterId && dayData.consumers[consumer.meterId]) {
+                                consumerData = dayData.consumers[consumer.meterId];
+                            } else {
+                                // Try all possible keys for this consumer
+                                for (const [key, data] of Object.entries(dayData.consumers)) {
+                                    if (key === consumer.id.toString() || 
+                                        (!consumer.meterId && Object.keys(dayData.consumers).length > 0)) {
+                                        consumerData = data;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (consumerData) {
+                                demand = consumerData.import[i] || 0;
+                            }
                         }
                         
                         consumerDemands[consumer.id] = demand;
