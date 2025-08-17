@@ -19,11 +19,11 @@
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
 
-    <div class="w-full max-w-2xl mx-auto bg-white rounded-2xl shadow-lg p-6 md:p-8">
+    <div class="w-full max-w-4xl mx-auto bg-white rounded-2xl shadow-lg p-6 md:p-8">
         
         <div class="text-center mb-8">
             <h1 class="text-3xl font-bold text-gray-800">vZEV Abrechnung für Nachbarn</h1>
-            <p class="text-gray-500 mt-2">Laden Sie die Lastgangdaten von Ihnen und Ihrem Nachbarn hoch.</p>
+            <p class="text-gray-500 mt-2">Laden Sie die Lastgangdaten aller Teilnehmer hoch.</p>
         </div>
 
         <!-- Price Inputs Section -->
@@ -42,6 +42,17 @@
             </div>
         </div>
 
+        <!-- Participant Configuration -->
+        <div class="mb-6 bg-gray-50 p-4 rounded-lg border">
+            <h3 class="text-lg font-semibold text-gray-700 mb-4">Teilnehmer konfigurieren</h3>
+            <div id="participants-config" class="space-y-3">
+                <!-- Participants will be added here dynamically -->
+            </div>
+            <button id="add-participant-btn" class="mt-4 bg-green-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-700 transition-colors duration-300">
+                + Teilnehmer hinzufügen
+            </button>
+        </div>
+
         <div class="mb-6">
             <label for="file-upload" class="block text-sm font-medium text-gray-700 mb-2">CSV-Dateien auswählen:</label>
             <input id="file-upload" type="file" multiple accept=".csv" class="block w-full text-sm text-gray-500 file:mr-4 file:border-0 file:rounded-lg">
@@ -53,9 +64,8 @@
             </button>
         </div>
 
-        <div id="results-container" class="space-y-6 hidden">
-            <div id="neighbor-summary-container" class="bg-blue-900 bg-opacity-90 text-white rounded-xl p-6 shadow-inner"></div>
-            <div id="summary-container" class="bg-gray-800 text-white rounded-xl p-6 shadow-inner"></div>
+        <div id="results-container" class="grid grid-cols-1 lg:grid-cols-2 gap-6 hidden">
+            <!-- Results will be dynamically added here for each participant -->
         </div>
 
     </div>
@@ -68,14 +78,97 @@
         const priceSellInput = document.getElementById('price-sell');
         const priceNeighborInput = document.getElementById('price-neighbor');
         const resultsContainer = document.getElementById('results-container');
-        const summaryContainer = document.getElementById('summary-container');
-        const neighborSummaryContainer = document.getElementById('neighbor-summary-container');
+        const participantsConfig = document.getElementById('participants-config');
+        const addParticipantBtn = document.getElementById('add-participant-btn');
 
         // --- Constants for Data Processing ---
         const CONSUMPTION_CODE = '1-1:1.29.0*255'; // Netzbezug
         const PRODUCTION_CODE = '1-1:2.29.0*255'; // Netzeinspeisung (Überschuss)
-        const USER_METER_ID = 'CH1035501234500000000000000000859';
-        const NEIGHBOR_METER_ID = 'CH1035501234500000000000000005020';
+        
+        // --- Dynamic Participants List ---
+        let participants = [];
+        let participantIdCounter = 0;
+        
+        // Initialize with default participants (2 producers/consumers + 3 pure consumers)
+        function initializeDefaultParticipants() {
+            addParticipant('Produzent 1', 'CH1035501234500000000000000000859', true, true);
+            addParticipant('Produzent 2', 'CH1035501234500000000000000005020', true, true);
+            addParticipant('Konsument 1', '', false, true);
+            addParticipant('Konsument 2', '', false, true);
+            addParticipant('Konsument 3', '', false, true);
+        }
+        
+        function addParticipant(name = '', meterId = '', isProducer = false, isConsumer = true) {
+            const id = participantIdCounter++;
+            participants.push({
+                id,
+                name: name || `Teilnehmer ${id + 1}`,
+                meterId: meterId || '',
+                isProducer,
+                isConsumer
+            });
+            renderParticipantConfig();
+        }
+        
+        function removeParticipant(id) {
+            participants = participants.filter(p => p.id !== id);
+            renderParticipantConfig();
+        }
+        
+        function updateParticipant(id, field, value) {
+            const participant = participants.find(p => p.id === id);
+            if (participant) {
+                if (field === 'isProducer' || field === 'isConsumer') {
+                    participant[field] = value === 'true' || value === true;
+                } else {
+                    participant[field] = value;
+                }
+            }
+        }
+        
+        function renderParticipantConfig() {
+            participantsConfig.innerHTML = participants.map(p => `
+                <div class="border rounded-lg p-3 bg-white" data-participant-id="${p.id}">
+                    <div class="grid grid-cols-1 md:grid-cols-5 gap-2 items-center">
+                        <input type="text" 
+                            value="${p.name}" 
+                            onchange="updateParticipant(${p.id}, 'name', this.value)"
+                            placeholder="Name"
+                            class="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <input type="text" 
+                            value="${p.meterId}" 
+                            onchange="updateParticipant(${p.id}, 'meterId', this.value)"
+                            placeholder="Zähler-ID"
+                            class="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 col-span-2">
+                        <div class="flex gap-4">
+                            <label class="flex items-center">
+                                <input type="checkbox" 
+                                    ${p.isProducer ? 'checked' : ''}
+                                    onchange="updateParticipant(${p.id}, 'isProducer', this.checked)"
+                                    class="mr-2">
+                                <span class="text-sm">Produzent</span>
+                            </label>
+                            <label class="flex items-center">
+                                <input type="checkbox" 
+                                    ${p.isConsumer ? 'checked' : ''}
+                                    onchange="updateParticipant(${p.id}, 'isConsumer', this.checked)"
+                                    class="mr-2">
+                                <span class="text-sm">Konsument</span>
+                            </label>
+                        </div>
+                        <button onclick="removeParticipant(${p.id})" 
+                            class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 transition-colors">
+                            Entfernen
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        addParticipantBtn.addEventListener('click', () => addParticipant());
+        
+        // Initialize with default participants
+        initializeDefaultParticipants();
 
         processBtn.addEventListener('click', async () => {
             if (fileUpload.files.length === 0) {
@@ -84,8 +177,7 @@
             }
 
             resultsContainer.classList.remove('hidden');
-            summaryContainer.innerHTML = '<p class="text-center text-gray-400">Dateien werden verarbeitet...</p>';
-            neighborSummaryContainer.innerHTML = '';
+            resultsContainer.innerHTML = '<p class="text-center text-gray-400 col-span-full">Dateien werden verarbeitet...</p>';
             
             try {
                 const fileContents = await Promise.all(Array.from(fileUpload.files).map(f => f.text()));
@@ -119,116 +211,241 @@
                     const values = cols.slice(4).map(v => parseFloat(v) || 0);
 
                     if (!dataMap.has(date)) {
-                        dataMap.set(date, {
-                            userGridFeedIn: Array(96).fill(0), // Überschusseinspeisung
-                            userGridImport: Array(96).fill(0), // Ihr Netzbezug
-                            neighborGridImport: Array(96).fill(0), // Netzbezug des Nachbarn
+                        const dayData = {
+                            producers: {},
+                            consumers: {}
+                        };
+                        
+                        // Initialize data structure for each participant
+                        participants.forEach(p => {
+                            if (p.isProducer) {
+                                dayData.producers[p.meterId] = {
+                                    feedIn: Array(96).fill(0),
+                                    import: Array(96).fill(0)
+                                };
+                            }
+                            if (p.isConsumer) {
+                                if (!dayData.consumers[p.meterId]) {
+                                    dayData.consumers[p.meterId] = {
+                                        import: Array(96).fill(0)
+                                    };
+                                }
+                            }
                         });
+                        
+                        dataMap.set(date, dayData);
                     }
+                    
                     const dayData = dataMap.get(date);
-
-                    if (meterId === USER_METER_ID && typeCode === PRODUCTION_CODE) dayData.userGridFeedIn = values;
-                    else if (meterId === USER_METER_ID && typeCode === CONSUMPTION_CODE) dayData.userGridImport = values;
-                    else if (meterId === NEIGHBOR_METER_ID && typeCode === CONSUMPTION_CODE) dayData.neighborGridImport = values;
+                    const participant = participants.find(p => p.meterId === meterId);
+                    
+                    if (participant) {
+                        if (participant.isProducer && typeCode === PRODUCTION_CODE) {
+                            if (dayData.producers[meterId]) {
+                                dayData.producers[meterId].feedIn = values;
+                            }
+                        } else if (typeCode === CONSUMPTION_CODE) {
+                            if (participant.isProducer && dayData.producers[meterId]) {
+                                dayData.producers[meterId].import = values;
+                            } else if (participant.isConsumer && dayData.consumers[meterId]) {
+                                dayData.consumers[meterId].import = values;
+                            }
+                        }
+                    }
                 });
             });
             return dataMap;
         }
 
         function calculateVZEV(timeSeriesData) {
-            const totals = {
-                totalUserGridFeedIn: 0, // Totaler Überschuss
-                soldToNeighbor: 0,
-                finalGridFeedIn: 0, // Was nach Verkauf an Nachbar übrig bleibt
-                totalUserGridImport: 0,
-                totalNeighborGridImport: 0,
-            };
+            // Initialize results structure for each participant
+            const participantResults = {};
+            participants.forEach(p => {
+                participantResults[p.id] = {
+                    name: p.name,
+                    meterId: p.meterId,
+                    isProducer: p.isProducer,
+                    isConsumer: p.isConsumer,
+                    totalProduction: 0,
+                    totalConsumption: 0,
+                    soldToOthers: 0,
+                    boughtFromOthers: 0,
+                    gridFeedIn: 0,
+                    gridImport: 0
+                };
+            });
 
-            for (const data of timeSeriesData.values()) {
+            // Process each time interval
+            for (const dayData of timeSeriesData.values()) {
                 for (let i = 0; i < 96; i++) {
-                    const userSurplus = data.userGridFeedIn[i] || 0;
-                    const neighborDemand = data.neighborGridImport[i] || 0;
+                    // Calculate total available production at this interval
+                    let totalAvailableProduction = 0;
+                    const producerSurplus = {};
                     
-                    totals.totalUserGridFeedIn += userSurplus;
-                    totals.totalUserGridImport += data.userGridImport[i] || 0;
-                    totals.totalNeighborGridImport += neighborDemand;
-
-                    // Kernlogik: Der verkaufte Strom ist der kleinere Wert von Angebot (Ihr Überschuss) und Nachfrage (Bedarf des Nachbarn)
-                    const consumedByNeighbor = Math.min(userSurplus, neighborDemand);
-                    totals.soldToNeighbor += consumedByNeighbor;
+                    // Calculate surplus for each producer
+                    participants.filter(p => p.isProducer).forEach(producer => {
+                        if (dayData.producers[producer.meterId]) {
+                            const production = dayData.producers[producer.meterId].feedIn[i] || 0;
+                            const ownConsumption = dayData.producers[producer.meterId].import[i] || 0;
+                            
+                            participantResults[producer.id].totalProduction += production;
+                            participantResults[producer.id].totalConsumption += ownConsumption;
+                            
+                            producerSurplus[producer.id] = production;
+                            totalAvailableProduction += production;
+                        }
+                    });
                     
-                    // Was nach dem Verkauf an den Nachbarn noch übrig ist, geht ins Netz
-                    totals.finalGridFeedIn += userSurplus - consumedByNeighbor;
+                    // Get all consumers and their demand
+                    const consumers = participants.filter(p => p.isConsumer);
+                    const consumerDemands = {};
+                    
+                    consumers.forEach(consumer => {
+                        let demand = 0;
+                        
+                        if (consumer.isProducer && dayData.producers[consumer.meterId]) {
+                            demand = dayData.producers[consumer.meterId].import[i] || 0;
+                        } else if (dayData.consumers[consumer.meterId]) {
+                            demand = dayData.consumers[consumer.meterId].import[i] || 0;
+                        }
+                        
+                        consumerDemands[consumer.id] = demand;
+                        
+                        if (!consumer.isProducer) {
+                            participantResults[consumer.id].totalConsumption += demand;
+                        }
+                    });
+                    
+                    // Calculate total demand
+                    const totalDemand = Object.values(consumerDemands).reduce((sum, d) => sum + d, 0);
+                    const numConsumers = consumers.length;
+                    
+                    // EQUAL DISTRIBUTION: Distribute available power equally among consumers
+                    if (totalAvailableProduction > 0 && numConsumers > 0) {
+                        // Each consumer gets an equal share of available production
+                        const equalSharePerConsumer = totalAvailableProduction / numConsumers;
+                        
+                        consumers.forEach(consumer => {
+                            const consumerDemand = consumerDemands[consumer.id];
+                            
+                            // Consumer gets the minimum of their demand and the equal share
+                            const consumerReceives = Math.min(consumerDemand, equalSharePerConsumer);
+                            participantResults[consumer.id].boughtFromOthers += consumerReceives;
+                            participantResults[consumer.id].gridImport += consumerDemand - consumerReceives;
+                        });
+                        
+                        // Calculate how much was actually consumed
+                        let totalConsumed = 0;
+                        consumers.forEach(consumer => {
+                            const consumerDemand = consumerDemands[consumer.id];
+                            totalConsumed += Math.min(consumerDemand, equalSharePerConsumer);
+                        });
+                        
+                        // Distribute consumption tracking to producers proportionally
+                        participants.filter(p => p.isProducer).forEach(producer => {
+                            if (producerSurplus[producer.id] > 0) {
+                                const producerShare = (producerSurplus[producer.id] / totalAvailableProduction) * totalConsumed;
+                                participantResults[producer.id].soldToOthers += producerShare;
+                                participantResults[producer.id].gridFeedIn += producerSurplus[producer.id] - producerShare;
+                            }
+                        });
+                        
+                    } else if (totalAvailableProduction > 0) {
+                        // No demand, all production goes to grid
+                        participants.filter(p => p.isProducer).forEach(producer => {
+                            participantResults[producer.id].gridFeedIn += producerSurplus[producer.id] || 0;
+                        });
+                    } else if (totalDemand > 0) {
+                        // No production, all demand from grid
+                        consumers.forEach(consumer => {
+                            participantResults[consumer.id].gridImport += consumerDemands[consumer.id] || 0;
+                        });
+                    }
                 }
             }
-            return totals;
+            
+            return participantResults;
         }
 
         function displayResults(results, prices) {
             const formatKwh = (num) => num.toFixed(3).replace('.', ',');
             const formatChf = (num) => num.toFixed(2).replace('.', ',');
-
-            // --- Neighbor's Bill ---
-            const costNeighborFromSolar = results.soldToNeighbor * prices.neighbor;
-            const neighborActualGridImport = results.totalNeighborGridImport - results.soldToNeighbor;
-            const costNeighborFromGrid = neighborActualGridImport * prices.buy;
-            const totalCostNeighbor = costNeighborFromSolar + costNeighborFromGrid;
-
-            neighborSummaryContainer.innerHTML = `
-                <h2 class="text-2xl font-bold text-center mb-6">Abrechnung für Nachbarn (Zähler ...${NEIGHBOR_METER_ID.slice(-4)})</h2>
-                <div class="space-y-4">
-                    ${createResultRow('Gesamtverbrauch Nachbar', `${formatKwh(results.totalNeighborGridImport)} kWh`)}
-                    <hr class="border-gray-700 my-3">
-                    ${createResultRow('davon von Ihnen (Solarstrom)', `${formatKwh(results.soldToNeighbor)} kWh`, `Kosten: ${formatChf(costNeighborFromSolar)} CHF`)}
-                    ${createResultRow('davon aus dem Netz', `${formatKwh(neighborActualGridImport)} kWh`, `Kosten: ${formatChf(costNeighborFromGrid)} CHF`)}
-                    <hr class="border-gray-700 my-3">
-                     <div class="flex justify-between items-center py-2 text-lg">
-                        <span class="font-bold text-white">Gesamtkosten Nachbar</span>
-                        <span class="font-bold text-white">${formatChf(totalCostNeighbor)} CHF</span>
+            
+            resultsContainer.innerHTML = '';
+            
+            // Display results for each participant
+            Object.values(results).forEach((participant, index) => {
+                const isProducer = participant.isProducer;
+                const bgColor = isProducer ? 'bg-green-800' : 'bg-blue-900';
+                
+                // Calculate financial results
+                const incomeFromNeighbors = participant.soldToOthers * prices.neighbor;
+                const incomeFromGrid = participant.gridFeedIn * prices.sell;
+                const costFromNeighbors = participant.boughtFromOthers * prices.neighbor;
+                const costFromGrid = participant.gridImport * prices.buy;
+                const totalIncome = incomeFromNeighbors + incomeFromGrid;
+                const totalCost = costFromNeighbors + costFromGrid;
+                const netResult = totalIncome - totalCost;
+                
+                const participantHtml = `
+                    <div class="${bgColor} bg-opacity-90 text-white rounded-xl p-6 shadow-inner">
+                        <h2 class="text-xl font-bold text-center mb-6">
+                            ${participant.name} 
+                            ${participant.meterId ? `(Zähler ...${participant.meterId.slice(-4)})` : ''}
+                        </h2>
+                        <div class="space-y-3 text-sm">
+                            ${isProducer ? `
+                                ${createResultRow('Gesamtproduktion', `${formatKwh(participant.totalProduction)} kWh`)}
+                                ${participant.isConsumer ? createResultRow('Eigenverbrauch', `${formatKwh(participant.totalConsumption)} kWh`) : ''}
+                                <hr class="border-gray-600 my-2">
+                                ${createResultRow('An Nachbarn verkauft', `${formatKwh(participant.soldToOthers)} kWh`, `Ertrag: ${formatChf(incomeFromNeighbors)} CHF`)}
+                                ${createResultRow('Ins Netz eingespeist', `${formatKwh(participant.gridFeedIn)} kWh`, `Ertrag: ${formatChf(incomeFromGrid)} CHF`)}
+                            ` : ''}
+                            
+                            ${participant.isConsumer ? `
+                                ${!isProducer ? createResultRow('Gesamtverbrauch', `${formatKwh(participant.totalConsumption)} kWh`) : ''}
+                                <hr class="border-gray-600 my-2">
+                                ${createResultRow('Von Nachbarn bezogen', `${formatKwh(participant.boughtFromOthers)} kWh`, `Kosten: ${formatChf(costFromNeighbors)} CHF`)}
+                                ${createResultRow('Vom Netz bezogen', `${formatKwh(participant.gridImport)} kWh`, `Kosten: ${formatChf(costFromGrid)} CHF`)}
+                            ` : ''}
+                            
+                            <hr class="border-gray-600 my-2">
+                            <div class="flex justify-between items-center py-1">
+                                <span class="font-semibold">Gesamtertrag</span>
+                                <span class="font-semibold">${formatChf(totalIncome)} CHF</span>
+                            </div>
+                            <div class="flex justify-between items-center py-1">
+                                <span class="font-semibold">Gesamtkosten</span>
+                                <span class="font-semibold">${formatChf(totalCost)} CHF</span>
+                            </div>
+                            <hr class="border-gray-600 my-2">
+                            <div class="flex justify-between items-center py-1 text-base">
+                                <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">Nettoergebnis</span>
+                                <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">${formatChf(netResult)} CHF</span>
+                            </div>
+                        </div>
                     </div>
-                </div>
-            `;
-
-            // --- Your Summary ---
-            const incomeSoldToNeighbor = results.soldToNeighbor * prices.neighbor;
-            const incomeFinalGridFeedIn = results.finalGridFeedIn * prices.sell;
-            const costUserGridImport = results.totalUserGridImport * prices.buy;
-            const netResult = (incomeSoldToNeighbor + incomeFinalGridFeedIn) - costUserGridImport;
-
-            summaryContainer.innerHTML = `
-                <h2 class="text-2xl font-bold text-center mb-6">Ihre Abrechnung (Zähler ...${USER_METER_ID.slice(-4)})</h2>
-                <div class="space-y-4">
-                    ${createResultRow('Ihr gesamter Solar-Überschuss', `${formatKwh(results.totalUserGridFeedIn)} kWh`)}
-                    <hr class="border-gray-600 my-3">
-                    ${createResultRow('davon an Nachbarn verkauft', `${formatKwh(results.soldToNeighbor)} kWh`, `Ertrag: ${formatChf(incomeSoldToNeighbor)} CHF`)}
-                    ${createResultRow('davon ins Netz eingespeist', `${formatKwh(results.finalGridFeedIn)} kWh`, `Ertrag: ${formatChf(incomeFinalGridFeedIn)} CHF`)}
-                    <hr class="border-gray-600 my-3">
-                    ${createResultRow('Ihr Netzbezug', `${formatKwh(results.totalUserGridImport)} kWh`, `Kosten: ${formatChf(costUserGridImport)} CHF`)}
-                    <hr class="border-gray-600 my-3">
-                    <div class="flex justify-between items-center py-2 text-lg">
-                        <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">Nettoergebnis</span>
-                        <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">${formatChf(netResult)} CHF</span>
-                    </div>
-                </div>
-            `;
+                `;
+                
+                resultsContainer.innerHTML += participantHtml;
+            });
         }
 
         function createResultRow(label, value, monetaryValue = '') {
             return `
-                <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                <div class="flex justify-between items-center py-1 border-b border-gray-700">
                     <div>
                         <span class="text-gray-300">${label}</span>
-                        ${monetaryValue ? `<br><span class="text-sm text-indigo-300">${monetaryValue}</span>` : ''}
+                        ${monetaryValue ? `<br><span class="text-xs text-indigo-300">${monetaryValue}</span>` : ''}
                     </div>
-                    <span class="font-semibold text-lg text-white text-right">${value}</span>
+                    <span class="font-semibold text-white text-right">${value}</span>
                 </div>
             `;
         }
 
         function displayMessage(message) {
             resultsContainer.classList.remove('hidden');
-            summaryContainer.innerHTML = `<p class="text-center text-red-400">${message}</p>`;
-            neighborSummaryContainer.innerHTML = '';
+            resultsContainer.innerHTML = `<p class="text-center text-red-400 col-span-full">${message}</p>`;
         }
     </script>
 </body>
