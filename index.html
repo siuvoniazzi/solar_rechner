@@ -19,7 +19,7 @@
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
 
-    <div class="w-full max-w-2xl mx-auto bg-white rounded-2xl shadow-lg p-6 md:p-8">
+    <div class="w-full max-w-4xl mx-auto bg-white rounded-2xl shadow-lg p-6 md:p-8">
         
         <div class="text-center mb-8">
             <h1 class="text-3xl font-bold text-gray-800">vZEV Abrechnung für Nachbarn</h1>
@@ -45,7 +45,7 @@
         <!-- Participant Configuration -->
         <div class="mb-6 bg-gray-50 p-4 rounded-lg border">
             <h3 class="text-lg font-semibold text-gray-700 mb-4">Teilnehmer konfigurieren</h3>
-            <div id="participants-config" class="space-y-4">
+            <div id="participants-config" class="space-y-3">
                 <!-- Participants will be added here dynamically -->
             </div>
             <button id="add-participant-btn" class="mt-4 bg-green-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-700 transition-colors duration-300">
@@ -64,7 +64,7 @@
             </button>
         </div>
 
-        <div id="results-container" class="space-y-6 hidden">
+        <div id="results-container" class="grid grid-cols-1 lg:grid-cols-2 gap-6 hidden">
             <!-- Results will be dynamically added here for each participant -->
         </div>
 
@@ -89,12 +89,13 @@
         let participants = [];
         let participantIdCounter = 0;
         
-        // Initialize with default participants
+        // Initialize with default participants (2 producers/consumers + 3 pure consumers)
         function initializeDefaultParticipants() {
             addParticipant('Produzent 1', 'CH1035501234500000000000000000859', true, true);
             addParticipant('Produzent 2', 'CH1035501234500000000000000005020', true, true);
             addParticipant('Konsument 1', '', false, true);
             addParticipant('Konsument 2', '', false, true);
+            addParticipant('Konsument 3', '', false, true);
         }
         
         function addParticipant(name = '', meterId = '', isProducer = false, isConsumer = true) {
@@ -128,7 +129,7 @@
         function renderParticipantConfig() {
             participantsConfig.innerHTML = participants.map(p => `
                 <div class="border rounded-lg p-3 bg-white" data-participant-id="${p.id}">
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
+                    <div class="grid grid-cols-1 md:grid-cols-5 gap-2 items-center">
                         <input type="text" 
                             value="${p.name}" 
                             onchange="updateParticipant(${p.id}, 'name', this.value)"
@@ -138,7 +139,7 @@
                             value="${p.meterId}" 
                             onchange="updateParticipant(${p.id}, 'meterId', this.value)"
                             placeholder="Zähler-ID"
-                            class="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            class="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 col-span-2">
                         <div class="flex gap-4">
                             <label class="flex items-center">
                                 <input type="checkbox" 
@@ -176,7 +177,7 @@
             }
 
             resultsContainer.classList.remove('hidden');
-            resultsContainer.innerHTML = '<p class="text-center text-gray-400">Dateien werden verarbeitet...</p>';
+            resultsContainer.innerHTML = '<p class="text-center text-gray-400 col-span-full">Dateien werden verarbeitet...</p>';
             
             try {
                 const fileContents = await Promise.all(Array.from(fileUpload.files).map(f => f.text()));
@@ -270,8 +271,7 @@
                     soldToOthers: 0,
                     boughtFromOthers: 0,
                     gridFeedIn: 0,
-                    gridImport: 0,
-                    transactions: [] // Detailed transactions for transparency
+                    gridImport: 0
                 };
             });
 
@@ -291,65 +291,65 @@
                             participantResults[producer.id].totalProduction += production;
                             participantResults[producer.id].totalConsumption += ownConsumption;
                             
-                            // Producer's surplus is their production
-                            // Their own consumption is handled separately from grid import
                             producerSurplus[producer.id] = production;
                             totalAvailableProduction += production;
                         }
                     });
                     
-                    // Calculate total demand from all consumers (including producers as consumers)
-                    let totalDemand = 0;
-                    const consumerDemand = {};
+                    // Get all consumers and their demand
+                    const consumers = participants.filter(p => p.isConsumer);
+                    const consumerDemands = {};
                     
-                    participants.filter(p => p.isConsumer).forEach(consumer => {
+                    consumers.forEach(consumer => {
                         let demand = 0;
                         
                         if (consumer.isProducer && dayData.producers[consumer.meterId]) {
-                            // Producer-consumer: their demand is their grid import
                             demand = dayData.producers[consumer.meterId].import[i] || 0;
                         } else if (dayData.consumers[consumer.meterId]) {
-                            // Pure consumer: their demand is their total import
                             demand = dayData.consumers[consumer.meterId].import[i] || 0;
                         }
                         
-                        consumerDemand[consumer.id] = demand;
-                        totalDemand += demand;
+                        consumerDemands[consumer.id] = demand;
                         
                         if (!consumer.isProducer) {
                             participantResults[consumer.id].totalConsumption += demand;
                         }
                     });
                     
-                    // Distribute available production to consumers proportionally
-                    if (totalAvailableProduction > 0 && totalDemand > 0) {
-                        const totalDistributed = Math.min(totalAvailableProduction, totalDemand);
+                    // Calculate total demand
+                    const totalDemand = Object.values(consumerDemands).reduce((sum, d) => sum + d, 0);
+                    const numConsumers = consumers.length;
+                    
+                    // EQUAL DISTRIBUTION: Distribute available power equally among consumers
+                    if (totalAvailableProduction > 0 && numConsumers > 0) {
+                        // Each consumer gets an equal share of available production
+                        const equalSharePerConsumer = totalAvailableProduction / numConsumers;
                         
-                        // Distribute to consumers based on their demand ratio
-                        participants.filter(p => p.isConsumer).forEach(consumer => {
-                            if (consumerDemand[consumer.id] > 0) {
-                                const consumerShare = (consumerDemand[consumer.id] / totalDemand) * totalDistributed;
-                                participantResults[consumer.id].boughtFromOthers += consumerShare;
-                                participantResults[consumer.id].gridImport += consumerDemand[consumer.id] - consumerShare;
-                                
-                                // Distribute this consumption across producers proportionally
-                                participants.filter(p => p.isProducer).forEach(producer => {
-                                    if (producerSurplus[producer.id] > 0) {
-                                        const producerContribution = (producerSurplus[producer.id] / totalAvailableProduction) * consumerShare;
-                                        participantResults[producer.id].soldToOthers += producerContribution;
-                                    }
-                                });
-                            }
+                        consumers.forEach(consumer => {
+                            const consumerDemand = consumerDemands[consumer.id];
+                            
+                            // Consumer gets the minimum of their demand and the equal share
+                            const consumerReceives = Math.min(consumerDemand, equalSharePerConsumer);
+                            participantResults[consumer.id].boughtFromOthers += consumerReceives;
+                            participantResults[consumer.id].gridImport += consumerDemand - consumerReceives;
                         });
                         
-                        // Calculate grid feed-in (surplus not consumed locally)
-                        const totalSurplusConsumed = totalDistributed;
+                        // Calculate how much was actually consumed
+                        let totalConsumed = 0;
+                        consumers.forEach(consumer => {
+                            const consumerDemand = consumerDemands[consumer.id];
+                            totalConsumed += Math.min(consumerDemand, equalSharePerConsumer);
+                        });
+                        
+                        // Distribute consumption tracking to producers proportionally
                         participants.filter(p => p.isProducer).forEach(producer => {
                             if (producerSurplus[producer.id] > 0) {
-                                const producerSoldLocally = (producerSurplus[producer.id] / totalAvailableProduction) * totalSurplusConsumed;
-                                participantResults[producer.id].gridFeedIn += producerSurplus[producer.id] - producerSoldLocally;
+                                const producerShare = (producerSurplus[producer.id] / totalAvailableProduction) * totalConsumed;
+                                participantResults[producer.id].soldToOthers += producerShare;
+                                participantResults[producer.id].gridFeedIn += producerSurplus[producer.id] - producerShare;
                             }
                         });
+                        
                     } else if (totalAvailableProduction > 0) {
                         // No demand, all production goes to grid
                         participants.filter(p => p.isProducer).forEach(producer => {
@@ -357,8 +357,8 @@
                         });
                     } else if (totalDemand > 0) {
                         // No production, all demand from grid
-                        participants.filter(p => p.isConsumer).forEach(consumer => {
-                            participantResults[consumer.id].gridImport += consumerDemand[consumer.id] || 0;
+                        consumers.forEach(consumer => {
+                            participantResults[consumer.id].gridImport += consumerDemands[consumer.id] || 0;
                         });
                     }
                 }
@@ -389,37 +389,37 @@
                 
                 const participantHtml = `
                     <div class="${bgColor} bg-opacity-90 text-white rounded-xl p-6 shadow-inner">
-                        <h2 class="text-2xl font-bold text-center mb-6">
+                        <h2 class="text-xl font-bold text-center mb-6">
                             ${participant.name} 
                             ${participant.meterId ? `(Zähler ...${participant.meterId.slice(-4)})` : ''}
                         </h2>
-                        <div class="space-y-4">
+                        <div class="space-y-3 text-sm">
                             ${isProducer ? `
                                 ${createResultRow('Gesamtproduktion', `${formatKwh(participant.totalProduction)} kWh`)}
                                 ${participant.isConsumer ? createResultRow('Eigenverbrauch', `${formatKwh(participant.totalConsumption)} kWh`) : ''}
-                                <hr class="border-gray-600 my-3">
+                                <hr class="border-gray-600 my-2">
                                 ${createResultRow('An Nachbarn verkauft', `${formatKwh(participant.soldToOthers)} kWh`, `Ertrag: ${formatChf(incomeFromNeighbors)} CHF`)}
                                 ${createResultRow('Ins Netz eingespeist', `${formatKwh(participant.gridFeedIn)} kWh`, `Ertrag: ${formatChf(incomeFromGrid)} CHF`)}
                             ` : ''}
                             
                             ${participant.isConsumer ? `
                                 ${!isProducer ? createResultRow('Gesamtverbrauch', `${formatKwh(participant.totalConsumption)} kWh`) : ''}
-                                <hr class="border-gray-600 my-3">
+                                <hr class="border-gray-600 my-2">
                                 ${createResultRow('Von Nachbarn bezogen', `${formatKwh(participant.boughtFromOthers)} kWh`, `Kosten: ${formatChf(costFromNeighbors)} CHF`)}
                                 ${createResultRow('Vom Netz bezogen', `${formatKwh(participant.gridImport)} kWh`, `Kosten: ${formatChf(costFromGrid)} CHF`)}
                             ` : ''}
                             
-                            <hr class="border-gray-600 my-3">
-                            <div class="flex justify-between items-center py-2">
+                            <hr class="border-gray-600 my-2">
+                            <div class="flex justify-between items-center py-1">
                                 <span class="font-semibold">Gesamtertrag</span>
                                 <span class="font-semibold">${formatChf(totalIncome)} CHF</span>
                             </div>
-                            <div class="flex justify-between items-center py-2">
+                            <div class="flex justify-between items-center py-1">
                                 <span class="font-semibold">Gesamtkosten</span>
                                 <span class="font-semibold">${formatChf(totalCost)} CHF</span>
                             </div>
-                            <hr class="border-gray-600 my-3">
-                            <div class="flex justify-between items-center py-2 text-lg">
+                            <hr class="border-gray-600 my-2">
+                            <div class="flex justify-between items-center py-1 text-base">
                                 <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">Nettoergebnis</span>
                                 <span class="font-bold ${netResult >= 0 ? 'text-green-400' : 'text-red-400'}">${formatChf(netResult)} CHF</span>
                             </div>
@@ -433,19 +433,19 @@
 
         function createResultRow(label, value, monetaryValue = '') {
             return `
-                <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                <div class="flex justify-between items-center py-1 border-b border-gray-700">
                     <div>
                         <span class="text-gray-300">${label}</span>
-                        ${monetaryValue ? `<br><span class="text-sm text-indigo-300">${monetaryValue}</span>` : ''}
+                        ${monetaryValue ? `<br><span class="text-xs text-indigo-300">${monetaryValue}</span>` : ''}
                     </div>
-                    <span class="font-semibold text-lg text-white text-right">${value}</span>
+                    <span class="font-semibold text-white text-right">${value}</span>
                 </div>
             `;
         }
 
         function displayMessage(message) {
             resultsContainer.classList.remove('hidden');
-            resultsContainer.innerHTML = `<p class="text-center text-red-400">${message}</p>`;
+            resultsContainer.innerHTML = `<p class="text-center text-red-400 col-span-full">${message}</p>`;
         }
     </script>
 </body>
